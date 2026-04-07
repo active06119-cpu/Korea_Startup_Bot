@@ -22,7 +22,6 @@ load_dotenv()
 REGIONS = ["전국", "서울특별시", "부산광역시", "대구광역시", "인천광역시", "광주광역시", "대전광역시", "울산광역시", "세종특별자치시", "강원도", "경기도", "경상남도", "경상북도", "전라남도", "전라북도", "충청남도", "충청북도", "제주특별자치도"]
 CATEGORIES = ["사업화", "기술개발(R&D)", "시설·공간·보육", "멘토링·컨설팅·교육", "글로벌", "인력", "융자·보증", "행사·네트워크", "창업교육", "판로·해외진출", "정책자금"]
 TARGETS = ["청소년", "대학생", "일반인", "대학", "연구기관", "일반기업", "1인 창조기업"]
-AGES = ["만 20세 미만", "만 20세 이상~만 39세 이하", "만 39세 이하", "만 40세 이상"]
 HISTORIES = ["예비창업자", "1년미만", "2년미만", "3년미만", "5년미만", "7년미만", "10년미만"]
 
 # 전역 객체
@@ -91,7 +90,6 @@ async def search_by_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     """키워드로 공고 검색 실행"""
     loading_msg = await update.message.reply_text(f"'{keyword}' 키워드로 공고를 검색 중입니다...")
     
-    # 기업마당 API 호출 (hashtags 파라미터 활용)
     results = api.fetch_bizinfo(hashtags=keyword, search_cnt=5)
     
     if not results:
@@ -124,24 +122,20 @@ async def summarize_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """AI 요약 버튼 클릭 처리"""
     query = update.callback_query
     pblanc_id = query.data.replace("summarize_", "")
-    content = context.bot_data.get(f"summary_{pblanc_id}", "내용을 찾을 수 없습니다.")
+    content = context.bot_data.get(f"summary_{pblanc_id}")
     
-    # OpenAI 클라이언트가 활성화되지 않은 경우
     if not api.openai_client:
-        await query.answer("현재 요약 기능을 사용할 수 없습니다. (OpenAI API 키가 설정되지 않았습니다.)", show_alert=True)
+        await query.answer("현재 요약 기능을 사용할 수 없습니다. (OpenAI API 키 설정 확인 필요)", show_alert=True)
         return
 
     await query.answer("AI 요약을 생성 중입니다...")
     
-    # 원본 메시지 텍스트 가져오기 (공고 제목 포함)
     original_text = query.message.text
     title = original_text.split('\n')[0].replace('📌 ', '')
     
     summary = api.summarize_announcement(title, content)
     
-    # 기존 버튼 유지하며 요약 내용 추가
     keyboard = query.message.reply_markup.inline_keyboard
-    # 요약 버튼 제거 (이미 요약했으므로)
     new_keyboard = [row for row in keyboard if not any(btn.callback_data == query.data for btn in row)]
     reply_markup = InlineKeyboardMarkup(new_keyboard)
     
@@ -160,16 +154,17 @@ async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📍 지역 설정", callback_data='set_region')],
         [InlineKeyboardButton("📂 분야 설정", callback_data='set_category')],
         [InlineKeyboardButton("👤 대상 설정", callback_data='set_target')],
+        [InlineKeyboardButton("📈 업력 설정", callback_data='set_history')],
         [InlineKeyboardButton("⬅️ 뒤로가기", callback_data='back_to_start')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # 현재 설정 상태 표시
     chat_id = update.effective_chat.id
     settings = db.get_user_settings(chat_id)
     region = settings.get('region', '미설정')
     category = settings.get('category', '미설정')
     target = settings.get('target', '미설정')
+    history = settings.get('history', '미설정')
     
     msg = (
         "🔔 **알림 설정**\n\n"
@@ -177,6 +172,7 @@ async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📍 지역: {region}\n"
         f"📂 분야: {category}\n"
         f"👤 대상: {target}\n"
+        f"📈 업력: {history}\n"
     )
     await query.edit_message_text(msg, reply_markup=reply_markup, parse_mode='Markdown')
 
@@ -190,9 +186,9 @@ async def set_filter_options(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if filter_type == 'region': options = REGIONS
     elif filter_type == 'category': options = CATEGORIES
     elif filter_type == 'target': options = TARGETS
+    elif filter_type == 'history': options = HISTORIES
     
     keyboard = []
-    # 2열로 배치
     for i in range(0, len(options), 2):
         row = [InlineKeyboardButton(options[i], callback_data=f"save_{filter_type}_{options[i]}")]
         if i+1 < len(options):
@@ -210,14 +206,35 @@ async def save_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     
     db.set_user_setting(chat_id, filter_type, value)
+    
+    # 설정 완료 팝업 알림 (짧은 메시지)
     await query.answer(f"{value} 설정 완료!")
-    await settings_menu(update, context)
+    
+    # 설정 완료 후 메뉴를 갱신하면서 안내 문구 추가
+    keyboard = [
+        [InlineKeyboardButton("📍 지역 설정", callback_data='set_region')],
+        [InlineKeyboardButton("📂 분야 설정", callback_data='set_category')],
+        [InlineKeyboardButton("👤 대상 설정", callback_data='set_target')],
+        [InlineKeyboardButton("📈 업력 설정", callback_data='set_history')],
+        [InlineKeyboardButton("⬅️ 뒤로가기", callback_data='back_to_start')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    settings = db.get_user_settings(chat_id)
+    msg = (
+        "✅ **알림 설정이 완료되었습니다.**\n"
+        "조건에 맞는 새 공고가 올라오면 알려드릴게요!\n\n"
+        f"📍 지역: {settings.get('region', '미설정')}\n"
+        f"📂 분야: {settings.get('category', '미설정')}\n"
+        f"👤 대상: {settings.get('target', '미설정')}\n"
+        f"📈 업력: {settings.get('history', '미설정')}\n"
+    )
+    await query.edit_message_text(msg, reply_markup=reply_markup, parse_mode='Markdown')
 
 async def check_new_announcements(context: ContextTypes.DEFAULT_TYPE):
     """새 공고 체크 및 알림 전송 (JobQueue용)"""
     logger.info("Checking for new announcements...")
     
-    # 최근 공고 가져오기
     latest_items = api.fetch_bizinfo(search_cnt=20)
     
     for item in latest_items:
@@ -225,19 +242,19 @@ async def check_new_announcements(context: ContextTypes.DEFAULT_TYPE):
         title = item.get('pblancNm') or item.get('title')
         
         if not db.is_notified(pblanc_id):
-            # 새로운 공고 발견
             db.add_notification(pblanc_id, title, item.get('pubDate', ''))
             
-            # 모든 사용자에게 조건 확인 후 발송
             users = db.get_all_users()
             for chat_id in users:
                 settings = db.get_user_settings(chat_id)
                 
-                # 간단한 필터링 로직 (지역/분야 포함 여부)
+                # 필터링 로직 강화
                 region_match = not settings.get('region') or settings.get('region') in (item.get('hashTags', '') + item.get('title', ''))
                 category_match = not settings.get('category') or settings.get('category') in (item.get('lcategory', '') + item.get('title', ''))
+                # 업력 필터링 (제목이나 해시태그에서 검색)
+                history_match = not settings.get('history') or settings.get('history') in (item.get('title', '') + item.get('hashTags', ''))
                 
-                if region_match and category_match:
+                if region_match and category_match and history_match:
                     try:
                         url = item.get('pblancUrl') or item.get('link')
                         msg = f"🆕 **새로운 공고 알림!**\n\n📌 {title}\n🏛 {item.get('jrsdInsttNm', '기관정보없음')}"
@@ -250,13 +267,11 @@ def main():
     """봇 실행"""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
-        logger.error("TELEGRAM_BOT_TOKEN is not set in environment variables.")
+        logger.error("TELEGRAM_BOT_TOKEN is not set.")
         return
 
-    # python-telegram-bot의 Application 객체 생성
     application = Application.builder().token(token).build()
 
-    # 핸들러 등록
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(start, pattern='back_to_start'))
     application.add_handler(CallbackQueryHandler(search_menu, pattern='search_menu'))
@@ -267,12 +282,9 @@ def main():
     application.add_handler(CallbackQueryHandler(save_setting, pattern='save_'))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # 내장 JobQueue를 사용하여 1시간(3600초)마다 새 공고 체크
-    # first=10: 봇 시작 10초 후 첫 실행
     application.job_queue.run_repeating(check_new_announcements, interval=3600, first=10)
 
-    # 봇 시작 (run_polling은 내부적으로 이벤트 루프를 관리함)
-    logger.info("Bot started with JobQueue...")
+    logger.info("Bot started with JobQueue and enhanced features...")
     application.run_polling()
 
 if __name__ == '__main__':
