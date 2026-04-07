@@ -7,10 +7,20 @@ from openai import OpenAI
 logger = logging.getLogger(__name__)
 
 class APIClient:
-    def __init__(self, bizinfo_key, kstartup_key, openai_key):
+    def __init__(self, bizinfo_key, kstartup_key, openai_key=None):
         self.bizinfo_key = bizinfo_key
         self.kstartup_key = kstartup_key
-        self.openai_client = OpenAI(api_key=openai_key)
+        # OpenAI API 키가 있을 때만 클라이언트 초기화
+        if openai_key:
+            try:
+                self.openai_client = OpenAI(api_key=openai_key)
+                logger.info("OpenAI client initialized successfully.")
+            except Exception as e:
+                logger.error(f"Failed to initialize OpenAI client: {e}")
+                self.openai_client = None
+        else:
+            logger.warning("OpenAI API key not provided. Summarization feature will be disabled.")
+            self.openai_client = None
 
     def fetch_bizinfo(self, hashtags=None, search_cnt=50):
         """기업마당 지원사업 공고 조회"""
@@ -65,7 +75,10 @@ class APIClient:
             return []
 
     def summarize_announcement(self, title, content):
-        """AI를 이용한 공고 내용 요약"""
+        """AI를 이용한 공고 내용 요약 (OpenAI 클라이언트가 활성화된 경우에만 작동)"""
+        if not self.openai_client:
+            return "현재 요약 기능을 사용할 수 없습니다. (OpenAI API 키가 설정되지 않았습니다.)"
+            
         try:
             prompt = f"""
             다음 정부지원사업 공고 내용을 핵심 위주로 3줄 요약해줘.
