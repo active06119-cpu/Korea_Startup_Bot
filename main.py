@@ -110,10 +110,12 @@ async def search_by_keyword(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         # 상세 요약을 위한 데이터 저장
         context.bot_data[f"summary_{pblanc_id}"] = item.get('bsnsSumryCn') or item.get('description', '')
         
-        keyboard = [
-            [InlineKeyboardButton("🤖 AI 요약", callback_data=f"summarize_{pblanc_id}")],
-            [InlineKeyboardButton("🔗 원문 보기", url=url)]
-        ]
+        keyboard = []
+        # OpenAI 클라이언트가 활성화된 경우에만 요약 버튼 노출
+        if api.openai_client:
+            keyboard.append([InlineKeyboardButton("🤖 AI 요약", callback_data=f"summarize_{pblanc_id}")])
+        
+        keyboard.append([InlineKeyboardButton("🔗 원문 보기", url=url)])
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         msg = f"📌 **{title}**\n🏛 {agency}\n"
@@ -125,6 +127,11 @@ async def summarize_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     pblanc_id = query.data.replace("summarize_", "")
     content = context.bot_data.get(f"summary_{pblanc_id}", "내용을 찾을 수 없습니다.")
     
+    # OpenAI 클라이언트가 활성화되지 않은 경우
+    if not api.openai_client:
+        await query.answer("현재 요약 기능을 사용할 수 없습니다. (OpenAI API 키가 설정되지 않았습니다.)", show_alert=True)
+        return
+
     await query.answer("AI 요약을 생성 중입니다...")
     
     # 원본 메시지 텍스트 가져오기 (공고 제목 포함)
@@ -243,6 +250,10 @@ async def check_new_announcements(context: ContextTypes.DEFAULT_TYPE):
 async def main():
     """봇 실행"""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        logger.error("TELEGRAM_BOT_TOKEN is not set in environment variables.")
+        return
+
     application = Application.builder().token(token).build()
 
     # 핸들러 등록
