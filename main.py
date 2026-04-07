@@ -7,7 +7,6 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 from dotenv import load_dotenv
 from models import Database
 from api_client import APIClient
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # 로깅 설정
 logging.basicConfig(
@@ -215,7 +214,7 @@ async def save_setting(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await settings_menu(update, context)
 
 async def check_new_announcements(context: ContextTypes.DEFAULT_TYPE):
-    """새 공고 체크 및 알림 전송 (스케줄러용)"""
+    """새 공고 체크 및 알림 전송 (JobQueue용)"""
     logger.info("Checking for new announcements...")
     
     # 최근 공고 가져오기
@@ -247,13 +246,14 @@ async def check_new_announcements(context: ContextTypes.DEFAULT_TYPE):
                     except Exception as e:
                         logger.error(f"Failed to send notification to {chat_id}: {e}")
 
-async def main():
+def main():
     """봇 실행"""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         logger.error("TELEGRAM_BOT_TOKEN is not set in environment variables.")
         return
 
+    # python-telegram-bot의 Application 객체 생성
     application = Application.builder().token(token).build()
 
     # 핸들러 등록
@@ -267,17 +267,13 @@ async def main():
     application.add_handler(CallbackQueryHandler(save_setting, pattern='save_'))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # 스케줄러 설정 (1시간마다 새 공고 체크)
-    scheduler = AsyncIOScheduler()
-    scheduler.add_job(check_new_announcements, 'interval', hours=1, args=[application])
-    scheduler.start()
+    # 내장 JobQueue를 사용하여 1시간(3600초)마다 새 공고 체크
+    # first=10: 봇 시작 10초 후 첫 실행
+    application.job_queue.run_repeating(check_new_announcements, interval=3600, first=10)
 
-    # 봇 시작
-    logger.info("Bot started...")
-    await application.run_polling()
+    # 봇 시작 (run_polling은 내부적으로 이벤트 루프를 관리함)
+    logger.info("Bot started with JobQueue...")
+    application.run_polling()
 
 if __name__ == '__main__':
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        pass
+    main()
